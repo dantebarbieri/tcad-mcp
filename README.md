@@ -95,10 +95,17 @@ discovers the IdP automatically:
    `authorization_code` consent flow, and stores the resulting tokens.
 6. Subsequent requests carry `Authorization: Bearer <JWT>`.
 
-Requires the IdP to support **Dynamic Client Registration** and
-`authorization_code` grant. Server-side this is the same OAuth mode as
-above — the "automatic" experience is purely a Claude-side workflow on
-top of the discovery endpoints the server publishes.
+Requires the IdP to support **Dynamic Client Registration** (RFC 7591)
+and `authorization_code` grant. Server-side this is the same OAuth mode
+as above — the "automatic" experience is purely a Claude-side workflow
+on top of the discovery endpoints the server publishes.
+
+> **IdP support for DCR varies.** Keycloak, Authentik (≥ 2024.4), Auth0,
+> Okta, Zitadel, and Dex support DCR. **Authelia does not** (any version
+> including 4.39+ — see [authelia/authelia#7304](https://github.com/authelia/authelia/discussions/7304)).
+> Clients running against Authelia fall back to Mode 2 (operator pastes
+> `client_id` / `client_secret` into Claude.ai's manual-credentials
+> dialog) — the rest of the consent flow proceeds identically.
 
 [mcp-auth]: https://modelcontextprotocol.io/specification/draft/basic/authorization
 [prm]: https://datatracker.ietf.org/doc/draft-ietf-oauth-resource-metadata/

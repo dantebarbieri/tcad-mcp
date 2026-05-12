@@ -22,8 +22,8 @@ from `openssl rand -hex 32` for self-deployments).
 
 | Client | Static bearer | OAuth (operator-issued) | Automatic discovery (DCR) |
 |---|---|---|---|
-| Claude.ai (web) | ✅ via header | ✅ paste client_id+secret | ✅ paste URL only |
-| Claude Desktop | ✅ via header | ✅ via header | ✅ via Settings → Integrations |
+| Claude.ai (web) | ✅ via dialog | ✅ paste client_id+secret | ✅ if your IdP supports DCR |
+| Claude Desktop | ✅ via header | ✅ via header | ✅ via Settings → Integrations, if IdP supports DCR |
 | Cursor | ✅ via header | ✅ via header | ⚠ varies by version |
 | Continue.dev | ✅ via header | ✅ via header | ⚠ varies by version |
 | Open WebUI | ✅ | — | — |
@@ -38,28 +38,50 @@ spec](https://modelcontextprotocol.io/specification/draft/basic/authorization):
 hits a protected endpoint, reads the `WWW-Authenticate: Bearer
 resource_metadata="…"` header, fetches `/.well-known/oauth-protected-resource`,
 discovers the IdP, then registers itself via [Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591)
-(DCR) and runs the user through the consent flow. Requires the IdP to
-support DCR; tcad-mcp itself supports it for any compliant IdP.
+(DCR) and runs the user through the consent flow.
+
+**DCR support is an IdP capability**, not something tcad-mcp can opt
+into or out of. As of writing:
+
+- ✅ **Supports DCR:** Keycloak, Authentik (≥ 2024.4), Auth0, Okta,
+  Zitadel, Dex (≥ 2.40)
+- ❌ **Does NOT support DCR:** Authelia (any version, including 4.39+ —
+  see [authelia/authelia#7304](https://github.com/authelia/authelia/discussions/7304)).
+  Use the operator-issued static-client path instead.
+
+If your IdP doesn't support DCR, the user pastes a pre-registered
+`client_id` / `client_secret` into Claude.ai's manual-credentials
+dialog. The rest of the consent flow proceeds identically.
 
 ---
 
 ## Claude.ai (web)
 
-The simplest setup. Anthropic's "Custom Integrations" feature handles all
-of OAuth + DCR + consent in the browser.
+Anthropic's "Custom Integrations" feature handles the OAuth handshake
+for you in the browser.
 
 1. **Settings → Integrations → Add custom integration**.
 2. **Name:** `TCAD` (or whatever you want).
 3. **Server URL:** `https://mcp-tcad.example`
-4. Click **Connect**.
-   - If your server has OAuth enabled and the IdP supports DCR, Claude
-     opens a tab to your IdP's consent screen — log in, approve, done.
-   - If your server is bearer-only, Claude prompts for the bearer token.
-5. The integration appears in your Claude conversations as available tools.
+4. Click **Connect**. What happens next depends on your IdP:
+   - **If the IdP supports DCR** (Keycloak, Authentik ≥ 2024.4, Auth0,
+     Okta, Zitadel, etc.): Claude opens a tab to the IdP consent screen,
+     you log in / approve, and the integration is live. Zero manual
+     credentials.
+   - **If the IdP does NOT support DCR** (e.g., **Authelia** — see
+     [authelia/authelia#7304](https://github.com/authelia/authelia/discussions/7304)):
+     Claude falls back to asking you for a pre-registered
+     `client_id` / `client_secret`. Your operator generates these
+     statically in the IdP config and hands them to you; paste both
+     into Claude.ai's dialog. Then the consent-screen popup proceeds
+     as normal.
+   - **If the server is bearer-only:** Claude prompts for the bearer
+     token directly. Paste it; done.
+5. The integration appears in your conversations as available tools.
 
-If the server has the static bearer enabled too, you can choose either
-auth method in the dialog. Claude defaults to discovery → DCR; manual
-bearer is the fallback.
+If multiple auth modes are enabled on the server, Claude.ai picks the
+one its current flow can complete; you can usually also manually choose
+"Use bearer token instead" in the dialog.
 
 ---
 
@@ -383,7 +405,7 @@ console.log(tools.tools.map((t) => t.name));
 | `401 Unauthorized` | Wrong bearer / token expired / wrong scheme | Check the `WWW-Authenticate` header in the response — it carries the failure reason (`invalid_token`, `invalid_request`, etc.) and the `resource_metadata` URL for OAuth discovery. |
 | `403 insufficient_scope` | OAuth token doesn't carry the required scope | Check the `scope=` value in `WWW-Authenticate`; re-issue the token with that scope. |
 | `404 oauth_not_configured` on `/.well-known/oauth-protected-resource` | The server is in bearer-only or open mode (no OAuth enabled). | If you wanted OAuth, set `OAUTH_ISSUER` (and `OAUTH_AUDIENCE`) on the server. Otherwise, use the bearer flow. |
-| Claude.ai's "Connect" button hangs or errors | The IdP doesn't support DCR, or its CORS config doesn't include `https://claude.ai` | Either fall back to bearer auth in Claude.ai's dialog, or fix the IdP CORS allowlist. |
+| Claude.ai's "Connect" button hangs or errors | Often: the IdP doesn't support DCR AND Claude couldn't fall back. Sometimes: IdP CORS config doesn't include `https://claude.ai`. | If you have a pre-registered OAuth client at the IdP, paste those credentials in Claude's "Use existing client" dialog. If you don't, fall back to bearer auth in the same dialog. Either way, also fix the IdP's CORS allowlist to include `https://claude.ai` (and `https://claude.com`). |
 | The server logs `WARN: tcad-mcp starting with NO authentication enabled` | Both modes resolved to disabled | Set `AUTH_TOKEN` (and/or `OAUTH_ISSUER`), or accept the open-server posture for trusted-LAN deploys. |
 
 For more, run the server with `LOG_LEVEL=debug` and watch
