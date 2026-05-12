@@ -22,7 +22,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from tcad_mcp.auth import BearerOrOAuthMiddleware, make_protected_resource_metadata
-from tcad_mcp.config import OAuthConfig
+from tcad_mcp.config import BearerConfig, OAuthConfig
 
 BEARER = "static-bearer-token"
 ISSUER = "https://idp.example"
@@ -74,30 +74,39 @@ async def _ok_handler(_request) -> JSONResponse:
 
 def make_app(
     *,
-    bearer: str = BEARER,
+    bearer_config: BearerConfig | None = None,
     oauth_config: OAuthConfig | None = None,
 ) -> Starlette:
     """Tiny Starlette app: /test (protected) + /health and well-known (bypass)."""
+    bc = bearer_config or BearerConfig(enabled=True, token=BEARER)
+    oc = oauth_config or OAuthConfig(
+        enabled=False,
+        issuer=None,
+        audience=None,
+        required_scope=None,
+        jwks_url_override=None,
+    )
     app = Starlette(
         routes=[
             Route("/health", _ok_handler),
             Route(
                 "/.well-known/oauth-protected-resource",
-                make_protected_resource_metadata(oauth_config),
+                make_protected_resource_metadata(oc),
             ),
             Route("/test", _ok_handler),
         ]
     )
     app.add_middleware(
         BearerOrOAuthMiddleware,
-        bearer=bearer,
-        oauth_config=oauth_config,
+        bearer_config=bc,
+        oauth_config=oc,
     )
     return app
 
 
 def make_oauth_config(
     *,
+    enabled: bool = True,
     issuer: str | None = ISSUER,
     audience: str | None = AUDIENCE,
     scope: str | None = SCOPE,
@@ -106,6 +115,7 @@ def make_oauth_config(
     jwks_ttl: int = 3600,
 ) -> OAuthConfig:
     return OAuthConfig(
+        enabled=enabled,
         issuer=issuer,
         audience=audience,
         required_scope=scope,
@@ -113,6 +123,26 @@ def make_oauth_config(
         discovery_ttl=3600,
         jwks_ttl=jwks_ttl,
         resource_url=resource_url,
+    )
+
+
+def make_bearer_config(
+    *, enabled: bool = True, token: str | None = BEARER
+) -> BearerConfig:
+    return BearerConfig(enabled=enabled, token=token)
+
+
+def make_disabled_bearer() -> BearerConfig:
+    return BearerConfig(enabled=False, token=None)
+
+
+def make_disabled_oauth() -> OAuthConfig:
+    return OAuthConfig(
+        enabled=False,
+        issuer=None,
+        audience=None,
+        required_scope=None,
+        jwks_url_override=None,
     )
 
 
@@ -333,6 +363,7 @@ def test_oauth_without_audience_or_resource_url_rejected_at_startup() -> None:
     """
     with pytest.raises(RuntimeError, match="OAUTH_AUDIENCE"):
         OAuthConfig(
+            enabled=True,
             issuer=ISSUER,
             audience=None,
             required_scope=None,
@@ -345,6 +376,7 @@ def test_oauth_audience_defaults_to_resource_url() -> None:
     """When RESOURCE_URL is set but OAUTH_AUDIENCE isn't, audience defaults
     to the resource URL — this is the most common safe configuration."""
     cfg = OAuthConfig(
+        enabled=True,
         issuer=ISSUER,
         audience=None,
         required_scope=None,
@@ -701,3 +733,94 @@ def test_discovery_and_jwks_cached(
     assert len(jwks_calls) == 1, (
         f"JWKS hit {len(jwks_calls)} times, expected 1 (caching broken)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-mode enable matrix (v0.3.0+)
+# ---------------------------------------------------------------------------
+
+
+def test_open_server_mode_passes_all_requests() -> None:
+    """When BOTH modes disabled, the middleware passes everything through.
+
+    This is the "open server" mode for trusted-LAN deployments. Operator
+    accepts the responsibility (warned at startup); the middleware itself
+    does no auth.
+    """
+    app = make_app(
+        bearer_config=make_disabled_bearer(),
+        oauth_config=make_disabled_oauth(),
+    )
+    client = TestClient(app)
+    # No Authorization header at all — should still succeed.
+    r = client.get("/test")
+    assert r.status_code == 200
+    # Bogus header — also fine in open mode.
+    r = client.get("/test", headers={"Authorization": "anything"})
+    assert r.status_code == 200
+
+
+def test_bearer_disabled_oauth_enabled_rejects_static_token() -> None:
+    """OAuth-only mode must NOT accept the static bearer.
+
+    The static bearer fails the bearer check (mode disabled), then the JWT
+    shape pre-check rejects it (not a JWT), so no JWKS fetch happens —
+    pytest-httpx isn't mocked because none should be needed.
+    """
+    app = make_app(
+        bearer_config=make_disabled_bearer(),
+        oauth_config=make_oauth_config(),
+    )
+    client = TestClient(app)
+    r = client.get("/test", headers={"Authorization": f"Bearer {BEARER}"})
+    assert r.status_code == 401
+
+
+def test_bearer_disabled_oauth_enabled_accepts_jwt(
+    httpx_mock: HTTPXMock, signing_key: RSAKey
+) -> None:
+    mock_idp(httpx_mock, signing_key)
+    app = make_app(
+        bearer_config=make_disabled_bearer(),
+        oauth_config=make_oauth_config(),
+    )
+    client = TestClient(app)
+    token = make_jwt(signing_key)
+    r = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+
+
+def test_bearer_enabled_oauth_disabled_rejects_jwt() -> None:
+    """Bearer-only mode rejects JWT-shaped tokens too — only the static
+    bearer is accepted. No JWKS fetch happens (test would fail if it did
+    since pytest-httpx isn't mocked)."""
+    app = make_app(
+        bearer_config=make_bearer_config(),
+        oauth_config=make_disabled_oauth(),
+    )
+    client = TestClient(app)
+    # Hand-construct a JWT-shaped token; should still be rejected.
+    fake_jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhYmMifQ.fakefakefake"
+    r = client.get("/test", headers={"Authorization": f"Bearer {fake_jwt}"})
+    assert r.status_code == 401
+
+
+def test_bearer_enabled_oauth_disabled_accepts_bearer() -> None:
+    app = make_app(
+        bearer_config=make_bearer_config(),
+        oauth_config=make_disabled_oauth(),
+    )
+    client = TestClient(app)
+    r = client.get("/test", headers={"Authorization": f"Bearer {BEARER}"})
+    assert r.status_code == 200
+
+
+def test_open_mode_well_known_returns_404() -> None:
+    """Open-server mode: no OAuth → 404 the protected-resource metadata."""
+    app = make_app(
+        bearer_config=make_disabled_bearer(),
+        oauth_config=make_disabled_oauth(),
+    )
+    client = TestClient(app)
+    r = client.get("/.well-known/oauth-protected-resource")
+    assert r.status_code == 404

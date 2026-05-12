@@ -1,13 +1,21 @@
 """MCP server wrapping the Travis Central Appraisal District public portal.
 
 Backed by the public TrueProdigy SaaS endpoint (default
-``https://prod-container.trueprodigyapi.com``). Two parallel auth paths:
+``https://prod-container.trueprodigyapi.com``). Three user-facing auth
+modes (two server code paths) — see :mod:`tcad_mcp.config` and
+:mod:`tcad_mcp.auth` for full details:
 
-1. **Static bearer** — loaded from ``AUTH_TOKEN_FILE`` or ``AUTH_TOKEN``;
-   always available, used by OpenClaw / Open WebUI / curl.
-2. **OAuth 2.1 JWT** (v0.2.0+) — generic OIDC validation against any issuer
-   set via ``OAUTH_ISSUER``; used by Claude.ai's remote-MCP integration. See
-   :mod:`tcad_mcp.auth`.
+1. **Bearer** — static secret loaded from ``AUTH_TOKEN`` /
+   ``AUTH_TOKEN_FILE``. Used by OpenClaw / Open WebUI / curl.
+2. **OAuth (manual client)** — operator pre-configures an OAuth client at
+   the IdP, hands credentials to the consumer.
+3. **Automatic (Claude.ai)** — same OAuth code path; Claude.ai discovers
+   the IdP via ``/.well-known/oauth-protected-resource`` and self-registers
+   via DCR (requires the IdP to support DCR).
+
+Each mode is independently enabled/disabled via ``BEARER_AUTH_ENABLED`` /
+``OAUTH_AUTH_ENABLED`` (three-state: unset = auto-detect from config
+presence; true = require it; false = force-disable).
 
 Intentionally office- AND IdP-agnostic: every external dependency is
 env-driven so the same image can be republished for any TCAD office on
@@ -15,26 +23,26 @@ TrueProdigy and run against any OIDC-compliant authorization server.
 
 Environment variables
 ---------------------
-AUTH_TOKEN_FILE          Path to a file containing the static bearer token
-                         (mutually exclusive with ``AUTH_TOKEN``).
-AUTH_TOKEN               Static bearer token (alternative to
-                         ``AUTH_TOKEN_FILE``).
+AUTH_TOKEN[_FILE]        Static bearer token (or path to a file containing
+                         it — standard Docker secret pattern).
+BEARER_AUTH_ENABLED      ``true`` / ``false`` / unset (auto-detect from
+                         ``AUTH_TOKEN`` presence).
+OAUTH_AUTH_ENABLED       ``true`` / ``false`` / unset (auto-detect from
+                         ``OAUTH_ISSUER`` presence).
+OAUTH_ISSUER             OIDC issuer URL.
+OAUTH_AUDIENCE           Required JWT ``aud`` claim. Defaults to
+                         ``RESOURCE_URL`` when unset.
+OAUTH_REQUIRED_SCOPE     Optional scope check (matches RFC 6749 ``scope``
+                         or array-style ``scp`` claims).
+OAUTH_JWKS_URL           Override the discovery-derived JWKS URL.
+OAUTH_DISCOVERY_TTL      OIDC discovery cache (seconds, default 3600).
+OAUTH_JWKS_TTL           JWKS cache (seconds, default 3600).
+RESOURCE_URL             Externally-visible URL of this server. Required
+                         in production behind a reverse proxy.
 TCAD_UPSTREAM_URL        Override the TrueProdigy base URL.
 TCAD_OFFICE              Office string sent to the auth endpoint
                          (default ``"Travis"``; e.g. ``"Williamson"``).
 TCAD_HTTP_TIMEOUT        httpx timeout in seconds (default ``20``).
-OAUTH_ISSUER             OIDC issuer URL — enables the OAuth path when set.
-                         All other ``OAUTH_*`` vars are no-ops without this.
-OAUTH_AUDIENCE           Required JWT ``aud`` claim. Defaults to the
-                         externally-visible URL of this server.
-OAUTH_REQUIRED_SCOPE     Optional scope check (matches RFC 6749 ``scope`` or
-                         array-style ``scp`` claims).
-OAUTH_JWKS_URL           Override the discovery-derived JWKS URL.
-OAUTH_DISCOVERY_TTL      OIDC discovery cache (seconds, default 3600).
-OAUTH_JWKS_TTL           JWKS cache (seconds, default 3600).
-RESOURCE_URL             Externally-visible URL of this server. If unset,
-                         derived from ``X-Forwarded-Proto`` / ``Host``
-                         headers (which is what NPM sends).
 """
 from __future__ import annotations
 
@@ -528,7 +536,7 @@ def create_app(config: AppConfig | None = None) -> Starlette:
     app = mcp.http_app(transport="streamable-http")
     app.add_middleware(
         BearerOrOAuthMiddleware,
-        bearer=cfg.bearer_token,
+        bearer_config=cfg.bearer,
         oauth_config=cfg.oauth,
     )
     # Order matters: the well-known + health routes must precede MCP's

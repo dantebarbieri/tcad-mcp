@@ -13,18 +13,23 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Static bearer auth — provide ONE of these.
+      # === Auth mode toggles (v0.3.0+) ==========================================
+      # Each mode is independently enabled/disabled. Three states each:
+      #   unset → auto-enable iff the mode's config (AUTH_TOKEN / OAUTH_ISSUER) is set
+      #   "true"  → require it (boot fails if config is missing)
+      #   "false" → force-disable even when config is present
+      # If BOTH end up disabled, the server boots in OPEN mode (no auth) and
+      # prints a warning to stderr.
+      # BEARER_AUTH_ENABLED: "true"
+      # OAUTH_AUTH_ENABLED: "true"
+
+      # === Mode 1: static bearer ================================================
+      # Provide ONE of these.
       AUTH_TOKEN: ${MCP_TOKEN}
       # AUTH_TOKEN_FILE: /run/secrets/MCP_TOKEN
 
-      # Optional — defaults shown.
-      # TCAD_UPSTREAM_URL: https://prod-container.trueprodigyapi.com
-      # TCAD_OFFICE: Travis
-      # TCAD_HTTP_TIMEOUT: "20"
-
-      # Optional OAuth 2.1 / OIDC — set OAUTH_ISSUER to enable. Works
-      # against any OIDC-compliant IdP. Both static bearer (above) and
-      # OAuth JWTs are accepted in parallel.
+      # === Mode 2/3: OAuth (manual client + Claude.ai discovery) ===============
+      # Generic OIDC, only the *value* of OAUTH_ISSUER names the IdP.
       # OAUTH_ISSUER: https://your-idp.example
       # OAUTH_AUDIENCE: https://mcp-tcad.example
       # RESOURCE_URL: https://mcp-tcad.example
@@ -32,6 +37,11 @@ services:
       # OAUTH_JWKS_URL: ""              # override; leave unset for OIDC discovery
       # OAUTH_DISCOVERY_TTL: "3600"
       # OAUTH_JWKS_TTL: "3600"
+
+      # === Upstream + transport ================================================
+      # TCAD_UPSTREAM_URL: https://prod-container.trueprodigyapi.com
+      # TCAD_OFFICE: Travis
+      # TCAD_HTTP_TIMEOUT: "20"
     healthcheck:
       test:
         - CMD-SHELL

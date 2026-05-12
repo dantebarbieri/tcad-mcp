@@ -47,7 +47,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from .config import OAuthConfig
+from .config import BearerConfig, OAuthConfig
 
 # Paths that bypass auth entirely.
 _BYPASS_PATHS: frozenset[str] = frozenset(
@@ -215,40 +215,52 @@ class _OIDCMetadata:
 
 
 class BearerOrOAuthMiddleware(BaseHTTPMiddleware):
-    """Static-bearer + OIDC-JWT auth middleware.
+    """Multi-mode auth middleware: static bearer + OIDC JWT.
 
-    Bearer is checked first via :func:`hmac.compare_digest` (constant time
-    over equal-length inputs; an attacker can still distinguish length, but
-    operator-chosen tokens are fixed-length so this is acceptable).
+    Each mode is independently enabled/disabled via :class:`BearerConfig`
+    and :class:`OAuthConfig`. When both are disabled, the middleware
+    becomes a pass-through (open-server mode for trusted-LAN deploys).
 
-    On bearer miss, if an OAuth issuer is configured, the token is decoded
-    as a JWT and validated against the issuer's JWKS plus ``iss`` / ``aud``
-    / scope claims. JWT-shape pre-check rejects garbage tokens before any
-    network fetch — which prevents an attacker from amplifying junk bearer
-    attempts into JWKS / discovery refetches.
+    When at least one mode is enabled, the bearer path is checked first
+    via :func:`hmac.compare_digest` (constant-time over equal-length
+    inputs). On bearer miss (or when bearer is disabled), if OAuth is
+    enabled the token is decoded as a JWT and validated against the
+    issuer's JWKS plus ``iss`` / ``aud`` / scope claims.
+
+    A JWT-shape pre-check rejects garbage tokens before any network fetch
+    — preventing an attacker from amplifying junk bearer attempts into
+    JWKS / discovery refetches.
     """
 
     def __init__(
         self,
         app,
         *,
-        bearer: str,
-        oauth_config: OAuthConfig | None,
+        bearer_config: BearerConfig,
+        oauth_config: OAuthConfig,
     ) -> None:
         super().__init__(app)
-        self._bearer = bearer
+        self._bearer_config = bearer_config
         self._oauth_config = oauth_config
         self._meta: _OIDCMetadata | None = None
-        if oauth_config is not None and oauth_config.enabled:
+        if oauth_config.enabled:
             self._meta = _OIDCMetadata(
-                oauth_config.issuer,  # type: ignore[arg-type]
+                oauth_config.issuer,  # type: ignore[arg-type]  # enabled => non-None
                 oauth_config.jwks_url_override,
                 oauth_config.discovery_ttl,
                 oauth_config.jwks_ttl,
             )
 
+    @property
+    def _open_server(self) -> bool:
+        return not self._bearer_config.enabled and not self._oauth_config.enabled
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path in _BYPASS_PATHS:
+            return await call_next(request)
+
+        # Open-server mode: no auth at all (operator's choice; warned at startup).
+        if self._open_server:
             return await call_next(request)
 
         header = request.headers.get("authorization", "")
@@ -263,7 +275,11 @@ class BearerOrOAuthMiddleware(BaseHTTPMiddleware):
             return self._challenge(request, error="invalid_request", status=401)
 
         # Path 1: static bearer (constant-time compare).
-        if hmac.compare_digest(token, self._bearer):
+        if (
+            self._bearer_config.enabled
+            and self._bearer_config.token is not None
+            and hmac.compare_digest(token, self._bearer_config.token)
+        ):
             return await call_next(request)
 
         # Path 2: OAuth JWT.
@@ -366,11 +382,11 @@ class BearerOrOAuthMiddleware(BaseHTTPMiddleware):
 def make_protected_resource_metadata(oauth_config: OAuthConfig | None):
     """Build the route handler for ``/.well-known/oauth-protected-resource``.
 
-    In bearer-only mode (no OAuth issuer configured) this returns 404 — per
-    RFC 9728 §3.2 the metadata document MUST NOT have a zero-value
-    ``authorization_servers`` array, and per the MCP authorization spec it
-    MUST list at least one issuer. Returning 404 is the spec-correct way to
-    say "this resource doesn't speak OAuth".
+    In bearer-only or open-server mode (no OAuth issuer configured) this
+    returns 404 — per RFC 9728 §3.2 the metadata document MUST NOT have a
+    zero-value ``authorization_servers`` array, and per the MCP authorization
+    spec it MUST list at least one issuer. Returning 404 is the spec-correct
+    way to say "this resource doesn't speak OAuth".
     """
 
     async def handler(request: Request) -> Response:
