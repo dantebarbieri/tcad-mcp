@@ -1,23 +1,40 @@
 """MCP server wrapping the Travis Central Appraisal District public portal.
 
 Backed by the public TrueProdigy SaaS endpoint (default
-``https://prod-container.trueprodigyapi.com``). Auth is a static bearer
-loaded from ``AUTH_TOKEN_FILE`` or ``AUTH_TOKEN``; OAuth 2.1 support lands
-in v0.2.0 (see :mod:`tcad_mcp.auth`).
+``https://prod-container.trueprodigyapi.com``). Two parallel auth paths:
 
-Intentionally office-agnostic: every external dependency (office, upstream
-URL, HTTP timeout, auth source) is pulled from the environment so the same
-image can be republished for any TCAD office that runs on TrueProdigy.
+1. **Static bearer** — loaded from ``AUTH_TOKEN_FILE`` or ``AUTH_TOKEN``;
+   always available, used by OpenClaw / Open WebUI / curl.
+2. **OAuth 2.1 JWT** (v0.2.0+) — generic OIDC validation against any issuer
+   set via ``OAUTH_ISSUER``; used by Claude.ai's remote-MCP integration. See
+   :mod:`tcad_mcp.auth`.
+
+Intentionally office- AND IdP-agnostic: every external dependency is
+env-driven so the same image can be republished for any TCAD office on
+TrueProdigy and run against any OIDC-compliant authorization server.
 
 Environment variables
 ---------------------
-AUTH_TOKEN_FILE      Path to a file containing the MCP bearer token
-                     (mutually exclusive with AUTH_TOKEN).
-AUTH_TOKEN           Bearer token (alternative to AUTH_TOKEN_FILE).
-TCAD_UPSTREAM_URL    Override the TrueProdigy base URL.
-TCAD_OFFICE          Office string sent to the auth endpoint
-                     (default ``"Travis"``; e.g. ``"Williamson"``, ``"Hays"``).
-TCAD_HTTP_TIMEOUT    httpx timeout in seconds (default ``20``).
+AUTH_TOKEN_FILE          Path to a file containing the static bearer token
+                         (mutually exclusive with ``AUTH_TOKEN``).
+AUTH_TOKEN               Static bearer token (alternative to
+                         ``AUTH_TOKEN_FILE``).
+TCAD_UPSTREAM_URL        Override the TrueProdigy base URL.
+TCAD_OFFICE              Office string sent to the auth endpoint
+                         (default ``"Travis"``; e.g. ``"Williamson"``).
+TCAD_HTTP_TIMEOUT        httpx timeout in seconds (default ``20``).
+OAUTH_ISSUER             OIDC issuer URL — enables the OAuth path when set.
+                         All other ``OAUTH_*`` vars are no-ops without this.
+OAUTH_AUDIENCE           Required JWT ``aud`` claim. Defaults to the
+                         externally-visible URL of this server.
+OAUTH_REQUIRED_SCOPE     Optional scope check (matches RFC 6749 ``scope`` or
+                         array-style ``scp`` claims).
+OAUTH_JWKS_URL           Override the discovery-derived JWKS URL.
+OAUTH_DISCOVERY_TTL      OIDC discovery cache (seconds, default 3600).
+OAUTH_JWKS_TTL           JWKS cache (seconds, default 3600).
+RESOURCE_URL             Externally-visible URL of this server. If unset,
+                         derived from ``X-Forwarded-Proto`` / ``Host``
+                         headers (which is what NPM sends).
 """
 from __future__ import annotations
 
@@ -32,10 +49,10 @@ from typing import Any
 import httpx
 from fastmcp import FastMCP
 from starlette.applications import Starlette
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
+from .auth import BearerOrOAuthMiddleware, make_protected_resource_metadata
 from .config import AppConfig
 from .shapers import (
     build_search_ladder,
@@ -48,26 +65,6 @@ from .shapers import (
 )
 
 _ISD_RE = re.compile(r"\bISD\b", re.IGNORECASE)
-
-
-class StaticBearer(BaseHTTPMiddleware):
-    """Static-bearer auth — exact match against ``AUTH_TOKEN`` from env/file.
-
-    Replaced by :class:`tcad_mcp.auth.BearerOrOAuthMiddleware` in v0.2.0,
-    which keeps this exact match path as a fallback alongside OAuth 2.1 JWT
-    validation. v0.1.0 ships this only.
-    """
-
-    def __init__(self, app, bearer: str) -> None:
-        super().__init__(app)
-        self._bearer = bearer
-
-    async def dispatch(self, request, call_next):
-        if request.url.path == "/health":
-            return await call_next(request)
-        if request.headers.get("authorization", "") != f"Bearer {self._bearer}":
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
 
 
 async def _health(_request) -> PlainTextResponse:
@@ -529,6 +526,20 @@ def create_app(config: AppConfig | None = None) -> Starlette:
     upstream = _UpstreamClient(cfg)
     mcp = _build_mcp(upstream)
     app = mcp.http_app(transport="streamable-http")
-    app.add_middleware(StaticBearer, bearer=cfg.bearer_token)
+    app.add_middleware(
+        BearerOrOAuthMiddleware,
+        bearer=cfg.bearer_token,
+        oauth_config=cfg.oauth,
+    )
+    # Order matters: the well-known + health routes must precede MCP's
+    # catch-all so the middleware's bypass list and the metadata endpoint
+    # actually win the routing.
+    app.routes.insert(
+        0,
+        Route(
+            "/.well-known/oauth-protected-resource",
+            make_protected_resource_metadata(cfg.oauth),
+        ),
+    )
     app.routes.insert(0, Route("/health", _health))
     return app
