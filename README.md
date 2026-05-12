@@ -10,6 +10,12 @@ authenticated HTTP endpoint.
 > Status: **alpha**. v0.3.0 adds independent enable/disable for each auth
 > mode and the standard Docker `_FILE` secret convention across the board.
 
+## Connecting clients
+
+Setup snippets for **Claude.ai (web), Claude Desktop, ChatGPT, Cursor,
+Continue.dev, Open WebUI, Cody, Cline, Zed**, plus `curl` and Python /
+TypeScript SDKs, are in [`docs/CLIENTS.md`](docs/CLIENTS.md).
+
 ## What it does
 
 Exposes nine tools over MCP's Streamable HTTP transport:
