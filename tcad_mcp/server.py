@@ -539,6 +539,21 @@ def create_app(config: AppConfig | None = None) -> Starlette:
         bearer_config=cfg.bearer,
         oauth_config=cfg.oauth,
     )
+    # FastMCP mounts streamable-http at ``/mcp``. Also expose it at ``/`` so
+    # clients that paste only the bare host URL (Claude.ai's web
+    # custom-integrations flow does this — it POSTs straight to the URL the
+    # user entered, with no path suffix) reach the same endpoint. The
+    # ``/mcp`` route stays in place so existing client configs (Claude
+    # Desktop via mcp-remote, Cursor, Continue.dev, Open WebUI, etc.) keep
+    # working without an edit.
+    mcp_route = next(
+        r for r in app.routes
+        if isinstance(r, Route) and r.path == "/mcp"
+    )
+    app.routes.insert(
+        0,
+        Route("/", mcp_route.endpoint, methods=[], name="StreamableHTTPASGIApp_root"),
+    )
     # Order matters: the well-known + health routes must precede MCP's
     # catch-all so the middleware's bypass list and the metadata endpoint
     # actually win the routing.
