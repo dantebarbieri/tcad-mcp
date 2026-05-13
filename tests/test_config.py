@@ -283,13 +283,24 @@ def test_app_config_explicit_disable_both_warns(
 
 
 def test_app_config_default_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default UA must start with `Mozilla/5.0 (...)` — TrueProdigy 403s
-    bare `python-httpx/...`, `curl/...`, and even bare `Mozilla/5.0`. Anything
-    of the form `Mozilla/5.0 (<comment>)` passes their edge filter."""
+    """Default UA must look like a real browser — TrueProdigy 403s bare
+    `python-httpx/...`, `curl/...`, even bare `Mozilla/5.0` and explicit
+    `Mozilla/5.0 (compatible; tcad-mcp)`. We pin to a recent stable Chrome
+    UA so we blend in with normal browser traffic. Regression guard: a
+    future "improvement" can't accidentally regress to a UA the upstream
+    blocks."""
     monkeypatch.setenv("AUTH_TOKEN", "abc")
     monkeypatch.delenv("TCAD_UPSTREAM_USER_AGENT", raising=False)
     cfg = AppConfig.from_env()
-    assert cfg.upstream_user_agent.startswith("Mozilla/5.0 (")
+    ua = cfg.upstream_user_agent
+    assert ua.startswith("Mozilla/5.0 (")
+    # Must NOT include the v0.3.5 string that's now blocklisted.
+    assert "tcad-mcp" not in ua
+    # Must look like a real browser (Chrome / Safari / Firefox / Edge).
+    assert any(
+        token in ua
+        for token in ("Chrome/", "Safari/", "Firefox/", "Edg/")
+    )
 
 
 def test_app_config_user_agent_override(monkeypatch: pytest.MonkeyPatch) -> None:

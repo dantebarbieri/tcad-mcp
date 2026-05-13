@@ -192,7 +192,7 @@ Direct env var wins over `_FILE` if both are set.
 | `TCAD_UPSTREAM_URL` | no | `https://prod-container.trueprodigyapi.com` | TrueProdigy base URL. |
 | `TCAD_OFFICE` | no | `Travis` | Office string sent to the auth endpoint. Try `Williamson`, `Hays`, etc. for other Texas counties on TrueProdigy. |
 | `TCAD_HTTP_TIMEOUT` | no | `20` | httpx timeout in seconds. |
-| `TCAD_UPSTREAM_USER_AGENT` | no | `Mozilla/5.0 (compatible; tcad-mcp)` | User-Agent sent on every upstream call. TrueProdigy's edge proxy 403s requests whose UA doesn't look like a real browser (any UA starting with `Mozilla/5.0 (...)` passes; bare `python-httpx/X.X`, `curl/X.X`, and even bare `Mozilla/5.0` are blocked). Override only if their rule changes. |
+| `TCAD_UPSTREAM_USER_AGENT` | no | A current stable Chrome desktop UA | User-Agent sent on every upstream call. TrueProdigy's edge proxy 403s requests whose UA isn't browser-shaped (bare `python-httpx/X.X`, `curl/X.X`, bare `Mozilla/5.0` are all blocked) **and** they actively blocklist identifying strings — they added the v0.3.5 default `Mozilla/5.0 (compatible; tcad-mcp)` to their list within ~95 minutes. Default is therefore a real Chrome UA. Override only to pin a different real-browser UA if Chrome's version starts looking stale. |
 
 ### Secret loading convention
 

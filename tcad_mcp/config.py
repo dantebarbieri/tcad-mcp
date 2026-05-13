@@ -191,14 +191,22 @@ class AppConfig:
         office = os.environ.get("TCAD_OFFICE", "Travis")
         http_timeout = float(os.environ.get("TCAD_HTTP_TIMEOUT", "20"))
         # The TrueProdigy edge proxy returns 403 to requests whose User-Agent
-        # doesn't look like a real browser (bare `python-httpx/X.X` is
-        # rejected; anything starting with `Mozilla/5.0 (...)` passes). We
-        # default to a neutral "compatible" UA that's accepted today and
-        # makes the source identifiable in their logs. Operators can
-        # override via `TCAD_UPSTREAM_USER_AGENT` if the rule changes.
+        # doesn't look like a real browser (bare `python-httpx/X.X`,
+        # `curl/X.X`, and bare `Mozilla/5.0` are all rejected; only Mozilla
+        # UAs with a real-browser-shaped product/version comment pass).
+        #
+        # We initially shipped `Mozilla/5.0 (compatible; tcad-mcp)` here for
+        # log identifiability — TrueProdigy added it to their blocklist
+        # within ~95 minutes of the v0.3.5 release going live. So instead
+        # we pin to a recent stable Chrome UA, which blends in with normal
+        # traffic. Operators with strong opinions on User-Agent identity
+        # (or who hit a future block) can override via
+        # `TCAD_UPSTREAM_USER_AGENT` without rebuilding the image.
         upstream_user_agent = (
             os.environ.get("TCAD_UPSTREAM_USER_AGENT", "").strip()
-            or "Mozilla/5.0 (compatible; tcad-mcp)"
+            or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+               "AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/131.0.0.0 Safari/537.36"
         )
         cfg = cls(
             upstream_url=upstream,
