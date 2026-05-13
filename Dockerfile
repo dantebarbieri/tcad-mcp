@@ -2,10 +2,12 @@
 
 # ---- Builder ---------------------------------------------------------------
 # Use the official uv image so we don't pay the cost of installing it. Tags
-# of the form `uv:<UV_VER>-python<PY_VER>-bookworm-slim` give us a reproducible
+# of the form `uv:<UV_VER>-python<PY_VER>-trixie-slim` give us a reproducible
 # uv + interpreter pair without resolving Python at build time. Pinned to a
 # minor (0.11.x) so security/patch updates flow but breaking uv changes don't.
-FROM ghcr.io/astral-sh/uv:0.11-python3.14-bookworm-slim AS builder
+# Astral publishes derived images on `trixie-slim` (not bookworm) — see
+# https://docs.astral.sh/uv/guides/integration/docker/#available-images.
+FROM ghcr.io/astral-sh/uv:0.11-python3.14-trixie-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -31,10 +33,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 # ---- Runtime ---------------------------------------------------------------
-# Slim Python image without uv — we just need the interpreter to launch the
-# pre-built venv. Keeping uv out of the runtime keeps the final image small
-# and the attack surface minimal.
-FROM python:3.14-slim AS runtime
+# Bare Python on the SAME Debian release (trixie) as the builder so the
+# venv's interpreter symlink and shared libraries line up exactly. Without
+# uv at runtime, the final image is smaller and the attack surface minimal.
+FROM python:3.14-slim-trixie AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
