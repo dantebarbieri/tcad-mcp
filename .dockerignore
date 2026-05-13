@@ -10,5 +10,6 @@ __pycache__
 *.pyc
 tests
 docs
-*.md
 docker-compose*.yml
+# README.md is intentionally NOT excluded — Dockerfile copies it for
+# the long_description metadata when pip-installing the package.
