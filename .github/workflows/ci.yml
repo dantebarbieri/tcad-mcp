@@ -17,19 +17,28 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+        with:
+          # Pin uv to a minor (0.11.x) so security/patch updates flow but
+          # breaking uv changes don't. Bump intentionally.
+          version: "0.11"
+          # `uv.lock` is the only thing whose change should bust the cache.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
+      - name: Verify lockfile is current
+        # Fails if pyproject.toml drifted without `uv lock` being re-run.
+        # Cheap (no network in nominal case) and prevents "works on my machine"
+        # lockfile drift from sneaking through CI.
+        run: uv lock --check
       - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --locked --extra dev --python "${{ matrix.python-version }}"
       - name: Ruff
-        run: ruff check .
+        run: uv run ruff check .
       - name: Pytest
-        run: pytest -q
+        run: uv run pytest -q
 
   docker-build:
     runs-on: ubuntu-latest
