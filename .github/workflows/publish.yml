@@ -1,0 +1,122 @@
+name: publish
+
+# Publishes container images to GHCR after the `ci` workflow succeeds.
+#
+# Tag layout:
+#   - main push   -> immutable `sha-<full>`, then promote `:latest`, `:main`
+#   - PR (same-repo, base=main) -> immutable `pr-<N>-sha-<full>`, then promote `:pr-<N>`
+#
+# Floating tags (`latest`, `main`, `pr-<N>`) are only moved if the
+# workflow_run's head SHA is still current on its ref. This prevents
+# stale reruns from regressing `:latest` to an older commit and prevents
+# closed/superseded PR reruns from clobbering an active preview.
+#
+# `workflow_run` always uses the publish.yml file from the default
+# branch, so PR changes to this file don't take effect until merged
+# (security-positive). Fork PRs are skipped entirely.
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_branch }}
+  # Cancel older PR previews when newer commits arrive, but never cancel
+  # an in-flight main publish (it might be the only successful publish
+  # for a given commit if the next one fails).
+  cancel-in-progress: ${{ github.event.workflow_run.event == 'pull_request' }}
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the commit CI ran against
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve immutable + floating tags
+        id: tags
+        env:
+          EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$REPO"
+          immutable=""
+          floating=""
+
+          if [ "$EVENT" = "push" ] && [ "$BRANCH" = "main" ]; then
+            immutable="$image:sha-$SHA"
+            current="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)"
+            if [ "$current" = "$SHA" ]; then
+              floating="$image:latest $image:main"
+            else
+              echo "::notice::SHA $SHA is no longer current main ($current); pushing immutable tag only."
+            fi
+          elif [ "$EVENT" = "pull_request" ] && [ -n "${PR_NUMBER:-}" ]; then
+            pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"
+            pr_state="$(echo "$pr_json" | jq -r .state)"
+            pr_base="$(echo "$pr_json"  | jq -r .base.ref)"
+            pr_head_sha="$(echo "$pr_json"  | jq -r .head.sha)"
+            pr_head_repo="$(echo "$pr_json" | jq -r .head.repo.full_name)"
+            if [ "$pr_state" = "open" ] \
+              && [ "$pr_base" = "main" ] \
+              && [ "$pr_head_sha" = "$SHA" ] \
+              && [ "$pr_head_repo" = "$REPO" ]; then
+              immutable="$image:pr-$PR_NUMBER-sha-$SHA"
+              floating="$image:pr-$PR_NUMBER"
+            else
+              echo "::notice::PR #$PR_NUMBER not eligible (state=$pr_state base=$pr_base head_sha=$pr_head_sha head_repo=$pr_head_repo); skipping publish."
+            fi
+          fi
+
+          echo "immutable=$immutable" >> "$GITHUB_OUTPUT"
+          echo "floating=$floating"   >> "$GITHUB_OUTPUT"
+          echo "Resolved immutable: ${immutable:-<none>}"
+          echo "Resolved floating:  ${floating:-<none>}"
+
+      - name: Build and push immutable tag (multi-arch)
+        if: steps.tags.outputs.immutable != ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.immutable }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Promote floating tags
+        if: steps.tags.outputs.floating != ''
+        env:
+          IMMUTABLE: ${{ steps.tags.outputs.immutable }}
+          FLOATING: ${{ steps.tags.outputs.floating }}
+        run: |
+          set -euo pipefail
+          args=()
+          for t in $FLOATING; do args+=(-t "$t"); done
+          docker buildx imagetools create "${args[@]}" "$IMMUTABLE"

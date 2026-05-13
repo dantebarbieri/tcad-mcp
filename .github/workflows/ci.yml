@@ -45,3 +45,23 @@ jobs:
           tags: tcad-mcp:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Stable aggregate check used by branch protection. Status check names
+  # for matrix jobs (`lint-and-test (3.11)`, etc.) can shift when GitHub
+  # tweaks how matrix legs are rendered; requiring this single job
+  # insulates branch protection from that fragility.
+  ci-required:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, docker-build]
+    if: always()
+    steps:
+      - name: Verify all required jobs passed
+        env:
+          RESULTS: ${{ toJson(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -E '"result": *"(failure|cancelled|skipped)"'; then
+            echo "One or more required upstream jobs did not succeed."
+            exit 1
+          fi

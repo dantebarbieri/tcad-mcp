@@ -1,0 +1,14 @@
+# Keep the build context minimal and free of repo metadata that a build
+# step shouldn't need. .git in particular can leak credentials/config if
+# a hostile Dockerfile inspects the build context.
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+tests
+docs
+*.md
+docker-compose*.yml

@@ -81,11 +81,35 @@ These are all enforced by tests in `test_auth.py` and `test_config.py`:
 
 ## CI / release
 
-- `ci.yml` — ruff + pytest matrix on Python 3.11/3.12/3.13, plus docker build
-  (no push).
-- `release.yml` — tag-triggered (`v*.*.*`) multi-arch build (amd64 + arm64)
-  pushed to `ghcr.io/dantebarbieri/tcad-mcp` with semver + `latest` tags.
+- `ci.yml` — ruff + pytest matrix on Python 3.11/3.12/3.13, plus docker
+  build (no push), plus a `ci-required` aggregate job that fails if any
+  upstream job didn't succeed. Runs on every push to `main` and every PR.
+- `publish.yml` — `workflow_run`-triggered after `ci` succeeds. Builds
+  multi-arch (amd64 + arm64) and pushes to `ghcr.io/dantebarbieri/tcad-mcp`:
+  - on `main` push → immutable `:sha-<full>`, then promotes `:latest`
+    and `:main` only if the SHA is still current `main`.
+  - on PR (same-repo, base=`main`, still open, head SHA still matching)
+    → immutable `:pr-<N>-sha-<full>`, then promotes `:pr-<N>`.
+  Floating-tag promotion uses `docker buildx imagetools create` against
+  the immutable digest so stale reruns can never regress floating tags.
+  Fork PRs are intentionally skipped (no GHCR write from untrusted code).
+- `release.yml` — tag-triggered (`v*.*.*`) multi-arch build pushed with
+  semver tags (`vX.Y.Z`, `X.Y`, `X`). Does **not** push `:latest` —
+  `:latest` is owned by `publish.yml` from `main`.
 - Bump version in `pyproject.toml` first, then `git tag vX.Y.Z` and push.
+- `workflow_run` always reads `publish.yml` from the default branch, so
+  PR changes to `publish.yml` don't take effect until merged. Test
+  publish-pipeline changes by merging a small change first.
+- `main` is protected: PRs required (0 approvals), linear history, the
+  single `ci-required` status check must pass, branches must be up to
+  date, force-push and deletion forbidden, enforced on admins. Version
+  bumps therefore go through PRs like any other change.
+- **Escape hatch when CI is wedged for non-code reasons** (registry
+  outage, action regression, etc.): temporarily relax protection with
+  `gh api -X PUT repos/dantebarbieri/tcad-mcp/branches/main/protection
+  -f enforce_admins=false`, push the fix, then restore with
+  `enforce_admins=true`. Verify with
+  `gh api repos/dantebarbieri/tcad-mcp/branches/main/protection`.
 
 ## Out of scope for this repo
 
