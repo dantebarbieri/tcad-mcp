@@ -333,16 +333,28 @@ class BearerOrOAuthMiddleware(BaseHTTPMiddleware):
 
         # aud — REQUIRED when OAuth is enabled (config validates this at
         # startup, so audience is non-None here).
+        #
+        # Comparison normalizes a single trailing slash on each value because
+        # MCP clients vary on this: Claude.ai sends `resource=https://host/`
+        # (with slash) per RFC 8707, others send `resource=https://host`
+        # (no slash). The IdP echoes whichever form the client used into the
+        # `aud` claim verbatim, so a strict-equality check would arbitrarily
+        # accept one client and reject the other. RFC 3986 §6.2.2.3 treats
+        # the two forms as equivalent for empty-path URIs (the common case
+        # for OAuth audiences), so normalizing is spec-aligned, not lax.
         required_aud = self._oauth_config.audience
         assert required_aud is not None, (
             "OAuthConfig should have rejected this at startup"
         )
+        required_aud_norm = _normalize_audience(required_aud)
         aud = claims.get("aud")
         if isinstance(aud, str):
-            if aud != required_aud:
+            if _normalize_audience(aud) != required_aud_norm:
                 raise _AuthError("audience mismatch")
         elif isinstance(aud, list):
-            if required_aud not in aud:
+            if required_aud_norm not in {
+                _normalize_audience(a) for a in aud if isinstance(a, str)
+            }:
                 raise _AuthError("audience mismatch")
         else:
             raise _AuthError("audience claim missing or unsupported type")
@@ -421,6 +433,21 @@ def _is_finite_number(x: object) -> bool:
     if isinstance(x, float):
         return x == x and x not in (float("inf"), float("-inf"))
     return False
+
+
+def _normalize_audience(aud: str) -> str:
+    """Normalize an OAuth audience URI for comparison.
+
+    Strips a single trailing slash so that ``https://host`` and
+    ``https://host/`` compare equal — RFC 3986 considers them equivalent
+    for empty-path URIs, and MCP clients (Claude.ai vs others) disagree
+    on which form to send as the RFC 8707 ``resource`` indicator. Only
+    one trailing slash is stripped, so ``https://host//`` (which is a
+    different URI per RFC 3986) is preserved as-is.
+    """
+    if aud.endswith("/") and not aud.endswith("//"):
+        return aud[:-1]
+    return aud
 
 
 def _extract_scopes(claims: dict) -> set[str]:

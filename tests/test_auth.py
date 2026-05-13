@@ -435,6 +435,60 @@ def test_audience_array_no_match_rejected(
     assert r.status_code == 401
 
 
+def test_audience_trailing_slash_on_token_accepted(
+    httpx_mock: HTTPXMock, signing_key: RSAKey
+) -> None:
+    """Token's `aud` may have a trailing slash even if config doesn't.
+
+    Claude.ai sends `resource=https://host/` (RFC 8707) and the IdP echoes
+    that into `aud` verbatim, so resource servers configured with the
+    no-slash form must still accept the slash form. RFC 3986 §6.2.2.3
+    treats them as equivalent for empty-path URIs.
+    """
+    mock_idp(httpx_mock, signing_key)
+    app = make_app(oauth_config=make_oauth_config())  # AUDIENCE has no slash
+    client = TestClient(app)
+    token = make_jwt(signing_key, aud=AUDIENCE + "/")
+    r = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+
+
+def test_audience_trailing_slash_on_config_accepted(
+    httpx_mock: HTTPXMock, signing_key: RSAKey
+) -> None:
+    """Config's audience may have a trailing slash even if token doesn't."""
+    mock_idp(httpx_mock, signing_key)
+    app = make_app(oauth_config=make_oauth_config(audience=AUDIENCE + "/"))
+    client = TestClient(app)
+    token = make_jwt(signing_key, aud=AUDIENCE)  # no slash
+    r = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+
+
+def test_audience_array_trailing_slash_match(
+    httpx_mock: HTTPXMock, signing_key: RSAKey
+) -> None:
+    """Trailing-slash normalization applies to each entry in an `aud` array."""
+    mock_idp(httpx_mock, signing_key)
+    app = make_app(oauth_config=make_oauth_config())  # AUDIENCE no slash
+    client = TestClient(app)
+    token = make_jwt(signing_key, aud=["https://other.example", AUDIENCE + "/"])
+    r = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+
+
+def test_audience_double_trailing_slash_not_normalized(
+    httpx_mock: HTTPXMock, signing_key: RSAKey
+) -> None:
+    """`https://host//` is a distinct URI per RFC 3986 — only single slash strips."""
+    mock_idp(httpx_mock, signing_key)
+    app = make_app(oauth_config=make_oauth_config())
+    client = TestClient(app)
+    token = make_jwt(signing_key, aud=AUDIENCE + "//")
+    r = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
 def test_missing_scope_returns_403_insufficient_scope(
     httpx_mock: HTTPXMock, signing_key: RSAKey
 ) -> None:
