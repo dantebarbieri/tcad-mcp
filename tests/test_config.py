@@ -275,3 +275,37 @@ def test_app_config_explicit_disable_both_warns(
     assert cfg.oauth.enabled is False
     captured = capsys.readouterr()
     assert "WARN" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# AppConfig — upstream_user_agent
+# ---------------------------------------------------------------------------
+
+
+def test_app_config_default_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default UA must start with `Mozilla/5.0 (...)` — TrueProdigy 403s
+    bare `python-httpx/...`, `curl/...`, and even bare `Mozilla/5.0`. Anything
+    of the form `Mozilla/5.0 (<comment>)` passes their edge filter."""
+    monkeypatch.setenv("AUTH_TOKEN", "abc")
+    monkeypatch.delenv("TCAD_UPSTREAM_USER_AGENT", raising=False)
+    cfg = AppConfig.from_env()
+    assert cfg.upstream_user_agent.startswith("Mozilla/5.0 (")
+
+
+def test_app_config_user_agent_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTH_TOKEN", "abc")
+    monkeypatch.setenv("TCAD_UPSTREAM_USER_AGENT", "Mozilla/5.0 (operator-pinned)")
+    cfg = AppConfig.from_env()
+    assert cfg.upstream_user_agent == "Mozilla/5.0 (operator-pinned)"
+
+
+def test_app_config_user_agent_blank_falls_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty / whitespace-only override is treated as unset so an accidental
+    `TCAD_UPSTREAM_USER_AGENT=` in compose doesn't silently send a UA-less
+    request that the upstream WAF will reject."""
+    monkeypatch.setenv("AUTH_TOKEN", "abc")
+    monkeypatch.setenv("TCAD_UPSTREAM_USER_AGENT", "   ")
+    cfg = AppConfig.from_env()
+    assert cfg.upstream_user_agent.startswith("Mozilla/5.0 (")

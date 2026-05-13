@@ -192,6 +192,7 @@ Direct env var wins over `_FILE` if both are set.
 | `TCAD_UPSTREAM_URL` | no | `https://prod-container.trueprodigyapi.com` | TrueProdigy base URL. |
 | `TCAD_OFFICE` | no | `Travis` | Office string sent to the auth endpoint. Try `Williamson`, `Hays`, etc. for other Texas counties on TrueProdigy. |
 | `TCAD_HTTP_TIMEOUT` | no | `20` | httpx timeout in seconds. |
+| `TCAD_UPSTREAM_USER_AGENT` | no | `Mozilla/5.0 (compatible; tcad-mcp)` | User-Agent sent on every upstream call. TrueProdigy's edge proxy 403s requests whose UA doesn't look like a real browser (any UA starting with `Mozilla/5.0 (...)` passes; bare `python-httpx/X.X`, `curl/X.X`, and even bare `Mozilla/5.0` are blocked). Override only if their rule changes. |
 
 ### Secret loading convention
 

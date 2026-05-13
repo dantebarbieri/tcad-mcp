@@ -179,6 +179,7 @@ class AppConfig:
     upstream_url: str
     office: str
     http_timeout: float
+    upstream_user_agent: str
     bearer: BearerConfig
     oauth: OAuthConfig
 
@@ -189,10 +190,21 @@ class AppConfig:
         ).rstrip("/")
         office = os.environ.get("TCAD_OFFICE", "Travis")
         http_timeout = float(os.environ.get("TCAD_HTTP_TIMEOUT", "20"))
+        # The TrueProdigy edge proxy returns 403 to requests whose User-Agent
+        # doesn't look like a real browser (bare `python-httpx/X.X` is
+        # rejected; anything starting with `Mozilla/5.0 (...)` passes). We
+        # default to a neutral "compatible" UA that's accepted today and
+        # makes the source identifiable in their logs. Operators can
+        # override via `TCAD_UPSTREAM_USER_AGENT` if the rule changes.
+        upstream_user_agent = (
+            os.environ.get("TCAD_UPSTREAM_USER_AGENT", "").strip()
+            or "Mozilla/5.0 (compatible; tcad-mcp)"
+        )
         cfg = cls(
             upstream_url=upstream,
             office=office,
             http_timeout=http_timeout,
+            upstream_user_agent=upstream_user_agent,
             bearer=BearerConfig.from_env(),
             oauth=OAuthConfig.from_env(),
         )
