@@ -44,10 +44,12 @@ TCAD_OFFICE              Office string sent to the auth endpoint
                          (default ``"Travis"``; e.g. ``"Williamson"``).
 TCAD_HTTP_TIMEOUT        httpx timeout in seconds (default ``20``).
 TCAD_UPSTREAM_USER_AGENT User-Agent sent on every upstream call (default
-                         ``"Mozilla/5.0 (compatible; tcad-mcp)"``). The
-                         TrueProdigy edge proxy 403s requests whose UA
-                         doesn't look like a real browser; only override
-                         if their rule changes.
+                         is a current stable Chrome desktop UA). The
+                         TrueProdigy edge proxy 403s identifying bot UAs
+                         (they blocklisted the v0.3.5 `compatible;
+                         tcad-mcp` default within ~95 min) so we pin
+                         to a real-browser string. Override only to
+                         swap in a different real-browser UA.
 """
 from __future__ import annotations
 
