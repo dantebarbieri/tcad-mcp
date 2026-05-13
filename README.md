@@ -7,8 +7,9 @@ structured property data — subdivision, year built, lot size, school
 district, value history, deed history, protest status — from a single
 authenticated HTTP endpoint.
 
-> Status: **alpha**. v0.3.0 adds independent enable/disable for each auth
-> mode and the standard Docker `_FILE` secret convention across the board.
+> Status: **alpha**. See the
+> [GitHub Releases page](https://github.com/dantebarbieri/tcad-mcp/releases)
+> for what's new in each version.
 
 ## Connecting clients
 

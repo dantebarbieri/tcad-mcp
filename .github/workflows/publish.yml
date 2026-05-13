@@ -66,11 +66,14 @@ jobs:
         run: |
           set -euo pipefail
           image="ghcr.io/$REPO"
+          short="${SHA:0:7}"
           immutable=""
           floating=""
+          version=""
 
           if [ "$EVENT" = "push" ] && [ "$BRANCH" = "main" ]; then
             immutable="$image:sha-$SHA"
+            version="main-$short"
             current="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)"
             if [ "$current" = "$SHA" ]; then
               floating="$image:latest $image:main"
@@ -89,6 +92,7 @@ jobs:
               && [ "$pr_head_repo" = "$REPO" ]; then
               immutable="$image:pr-$PR_NUMBER-sha-$SHA"
               floating="$image:pr-$PR_NUMBER"
+              version="pr-$PR_NUMBER-$short"
             else
               echo "::notice::PR #$PR_NUMBER not eligible (state=$pr_state base=$pr_base head_sha=$pr_head_sha head_repo=$pr_head_repo); skipping publish."
             fi
@@ -96,8 +100,10 @@ jobs:
 
           echo "immutable=$immutable" >> "$GITHUB_OUTPUT"
           echo "floating=$floating"   >> "$GITHUB_OUTPUT"
+          echo "version=$version"     >> "$GITHUB_OUTPUT"
           echo "Resolved immutable: ${immutable:-<none>}"
           echo "Resolved floating:  ${floating:-<none>}"
+          echo "Resolved version:   ${version:-<none>}"
 
       - name: Build and push immutable tag (multi-arch)
         if: steps.tags.outputs.immutable != ''
@@ -107,6 +113,16 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.immutable }}
+          # OCI labels make the GHCR package page show meaningful metadata
+          # for `:latest` / `:main` / `:pr-<N>` builds (which don't carry
+          # a semver tag the way release.yml's tag-triggered builds do).
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+            org.opencontainers.image.title=tcad-mcp
+            org.opencontainers.image.description=MCP server wrapping the Travis Central Appraisal District public portal (TrueProdigy backend).
+            org.opencontainers.image.licenses=MIT
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
