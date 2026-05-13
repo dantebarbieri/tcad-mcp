@@ -17,7 +17,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.1.0
         with:
           # Pin uv to a minor (0.11.x) so security/patch updates flow but
           # breaking uv changes don't. Bump intentionally.
