@@ -43,6 +43,11 @@ TCAD_UPSTREAM_URL        Override the TrueProdigy base URL.
 TCAD_OFFICE              Office string sent to the auth endpoint
                          (default ``"Travis"``; e.g. ``"Williamson"``).
 TCAD_HTTP_TIMEOUT        httpx timeout in seconds (default ``20``).
+TCAD_UPSTREAM_USER_AGENT User-Agent sent on every upstream call (default
+                         ``"Mozilla/5.0 (compatible; tcad-mcp)"``). The
+                         TrueProdigy edge proxy 403s requests whose UA
+                         doesn't look like a real browser; only override
+                         if their rule changes.
 """
 from __future__ import annotations
 
@@ -123,11 +128,25 @@ class _UpstreamClient:
         self._token_expires_at = _decode_jwt_exp(fresh)
         return fresh
 
+    def _new_client(self) -> httpx.AsyncClient:
+        """Build an httpx client with the upstream UA + timeout pre-set.
+
+        TrueProdigy's edge proxy 403s requests with the default
+        ``python-httpx/X.X`` User-Agent (and any other non-browser-looking
+        UA) on most ``/public/propertyaccount/*`` paths, so every upstream
+        call has to ship a Mozilla-style UA. Centralising it here keeps the
+        three call-sites in lockstep.
+        """
+        return httpx.AsyncClient(
+            timeout=self._cfg.http_timeout,
+            headers={"User-Agent": self._cfg.upstream_user_agent},
+        )
+
     async def get_year(self) -> int:
         if self._year and time.time() < self._year_expires_at:
             return self._year
         try:
-            async with httpx.AsyncClient(timeout=self._cfg.http_timeout) as c:
+            async with self._new_client() as c:
                 r = await c.get(f"{self._cfg.upstream_url}/public/config/defaultyear")
                 r.raise_for_status()
                 new_year = int(r.json()["results"]["year"])
@@ -143,7 +162,7 @@ class _UpstreamClient:
         Returns the parsed JSON body, or ``{}`` for HTTP 204 / empty bodies
         (TCAD uses 204 to signal "no matching rows" on the search endpoint).
         """
-        async with httpx.AsyncClient(timeout=self._cfg.http_timeout) as client:
+        async with self._new_client() as client:
             token = await self._get_token(client)
             for attempt in (1, 2):
                 r = await client.request(
