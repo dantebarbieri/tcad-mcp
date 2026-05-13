@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project
 
 # Now bring in sources and install the project itself (still no dev extras).
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE uv.lock ./
 COPY tcad_mcp ./tcad_mcp
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
