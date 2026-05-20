@@ -210,16 +210,16 @@ same `<NAME>` / `<NAME>_FILE` convention.
 ```bash
 git clone https://github.com/dantebarbieri/tcad-mcp.git
 cd tcad-mcp
-python -m venv .venv && . .venv/bin/activate    # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
-pytest        # 128 tests
-ruff check .
+mise install                    # installs the pinned Python from mise.toml
+uv sync --extra dev             # creates .venv and installs runtime + dev deps
+uv run pytest                   # 128 tests
+uv run ruff check .
 ```
 
 Run the dev server (bearer-only):
 
 ```bash
-AUTH_TOKEN=dev python -m tcad_mcp
+AUTH_TOKEN=dev uv run python -m tcad_mcp
 ```
 
 ## Roadmap
