@@ -187,6 +187,25 @@ def test_health_bypasses_auth() -> None:
     assert r.status_code == 200
 
 
+@pytest.mark.parametrize(
+    "bypass_path", ["/health", "/.well-known/oauth-protected-resource"]
+)
+def test_malformed_host_cannot_bypass_auth(bypass_path: str) -> None:
+    """Host-derived URL paths must not override the path used for routing."""
+    app = make_app(oauth_config=make_oauth_config())
+    with TestClient(app) as client:
+        headers = {"Host": f"attacker.example{bypass_path}?"}
+        response = client.get("/test", headers=headers)
+        assert response.status_code == 401
+        assert response.json() == {"error": "unauthorized"}
+        assert "WWW-Authenticate" in response.headers
+
+        headers["Authorization"] = f"Bearer {BEARER}"
+        response = client.get("/test", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+
+
 def test_well_known_bypasses_auth() -> None:
     app = make_app(oauth_config=make_oauth_config())
     client = TestClient(app)
@@ -655,8 +674,8 @@ def test_resource_url_with_spoofed_host_header_when_configured() -> None:
 def test_resource_url_rejects_host_with_quote_injection() -> None:
     """A malicious Host header with quote chars must NOT poison the metadata.
 
-    The middleware drops back to a safe placeholder rather than echoing
-    attacker input into a header value. (NPM normally strips this; the
+    The middleware falls back to the safe ASGI server or a placeholder,
+    rather than echoing attacker input. (NPM normally strips this; the
     test exists as defense-in-depth for direct connections.)
     """
     app = make_app(oauth_config=make_oauth_config())
@@ -665,12 +684,11 @@ def test_resource_url_rejects_host_with_quote_injection() -> None:
         "/.well-known/oauth-protected-resource",
         headers={"X-Forwarded-Proto": "https", "Host": 'evil"\\.example'},
     )
-    # Either the request is rejected by Starlette's header parser, or the
-    # middleware falls back to the placeholder. Both are acceptable; what
+    # Either the request is rejected, or a safe fallback is used. What
     # we must NOT see is the malicious string echoed into the response.
     if r.status_code == 200:
         assert 'evil"' not in r.text
-        assert "_unconfigured" in r.text or "https://" in r.json()["resource"]
+        assert r.json()["resource"] in {"https://_unconfigured", "http://testserver"}
 
 
 def test_bearer_in_bearer_only_mode_rejects_jwt() -> None:

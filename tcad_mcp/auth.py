@@ -256,7 +256,7 @@ class BearerOrOAuthMiddleware(BaseHTTPMiddleware):
         return not self._bearer_config.enabled and not self._oauth_config.enabled
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in _BYPASS_PATHS:
+        if request.scope["path"] in _BYPASS_PATHS:
             return await call_next(request)
 
         # Open-server mode: no auth at all (operator's choice; warned at startup).
