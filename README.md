@@ -43,6 +43,10 @@ fallback ladder, etc.) is documented in the homeserver repo's design spec:
 Three user-facing auth modes, each independently enabled/disabled. A request
 is allowed if it satisfies **any** enabled mode.
 
+Only `/health` and `/.well-known/oauth-protected-resource` bypass enabled
+authentication. These checks use the ASGI request path, not a URL derived
+from the `Host` header.
+
 ### Mode 1: Bearer (always-available shared secret)
 
 A single static secret loaded from `AUTH_TOKEN` (env var) or `AUTH_TOKEN_FILE`
@@ -119,6 +123,9 @@ A one-line warning is printed to stderr at startup. Suitable only for
 trusted-LAN deployments behind a network ACL.
 
 ## Quickstart (Docker, bearer-only)
+
+CI, publish, and release image builds pull fresh base images so Debian
+security updates are picked up when the base image publisher includes them.
 
 ```bash
 docker run --rm -p 8080:8080 \
